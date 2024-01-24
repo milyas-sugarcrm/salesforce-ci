@@ -1,0 +1,320 @@
+name: Validate PR - CI
+
+# Definition when the workflow should run
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+# Workflow environment variables
+env:
+  DEVHUB_SFDX_CLIENT_ID: ${{ secrets.DEVHUB_SFDX_CLIENT_ID }}
+  DEVHUB_SFDX_JWT_SERVER_KEY: ${{ secrets.DEVHUB_SFDX_JWT_SERVER_KEY }}
+  DEVHUB_SFDX_JWT_USERNAME: ${{ secrets.DEVHUB_SFDX_JWT_USERNAME }}
+  DEVHUB_SFDX_JWT_INSTANCE_URL: ${{ secrets.DEVHUB_SFDX_JWT_INSTANCE_URL }}
+  DEVHUB_SFDX_JWT_ALIAS: ${{ secrets.DEVHUB_SFDX_JWT_ALIAS }}
+
+# Jobs to be executed
+jobs:
+  # Formatting and linting only runs on human-submitted PRs
+  format-lint-lwc-tests:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the source code
+      - name: "Checkout source code"
+        uses: actions/checkout@v3
+
+      # Install Volta to enforce proper node and package manager versions
+      - name: "Install Volta"
+        uses: volta-cli/action@v4
+
+      # Cache node_modules to speed up the process
+      - name: "Restore node_modules cache"
+        id: cache-npm
+        uses: actions/cache@v3
+        with:
+          path: node_modules
+          key: npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            npm-${{ env.cache-name }}-
+            npm-
+
+      # Install npm dependencies for Prettier, Jest and others
+      - name: "Install npm dependencies"
+        if: steps.cache-npm.outputs.cache-hit != 'true'
+        run: |
+          if [ ! -f "package.json.lock" ]; then
+              npm install
+          else
+              HUSKY=0 npm ci
+          fi
+
+      # Prettier formatting
+      - name: "Code formatting verification with Prettier"
+        run: npm run prettier:verify
+
+      # Lint LWC / Aura
+      - name: "Lint Lightning Web Components / Aura Components"
+        run: npm run lint
+
+      # LWC unit tests
+      - name: "Unit test Lightning Web Components"
+        run: npm run test:unit:coverage
+
+      # Upload code coverage data
+      - name: "Upload code coverage for LWC to Codecov.io"
+        uses: codecov/codecov-action@v3
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          flags: LWC
+
+  scratch-org-test:
+    runs-on: ubuntu-latest
+    needs: format-lint-lwc-tests
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - name: Check Secrets
+        shell: bash
+        run: |
+          # Check if SECRETS are set and have data
+          if [ -z "${{ env.DEVHUB_SFDX_CLIENT_ID }}" ]; then
+            echo "Error: DEVHUB_SFDX_CLIENT_ID is not set or has no data."
+            exit 1
+          fi
+
+          if [ -z "${{ env.DEVHUB_SFDX_JWT_SERVER_KEY }}" ]; then
+            echo "Error: DEVHUB_SFDX_JWT_SERVER_KEY is not set or has no data."
+            exit 1
+          fi
+
+          if [ -z "${{ env.DEVHUB_SFDX_JWT_USERNAME }}" ]; then
+            echo "Error: DEVHUB_SFDX_JWT_USERNAME is not set or has no data."
+            exit 1
+          fi
+
+          if [ -z "${{ env.DEVHUB_SFDX_JWT_INSTANCE_URL }}" ]; then
+            echo "Error: DEVHUB_SFDX_JWT_INSTANCE_URL is not set or has no data."
+            exit 1
+          fi
+
+          if [ -z "${{ env.DEVHUB_SFDX_JWT_ALIAS }}" ]; then
+            echo "Error: DEVHUB_SFDX_JWT_ALIAS is not set or has no data."
+            exit 1
+          fi
+          echo "All secrets are set and have data."
+
+      # Checkout the source code
+      - name: "Checkout source code"
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      # Set up Rulesets for PMD
+      - name: Set up Rulesets for PMD
+        id: set-rulesets
+        env:
+          PMD_RULE_BESTPRACTICES: ${{ secrets.PMD_RULE_BESTPRACTICES }}
+          PMD_RULE_CODESTYLE: ${{ secrets.PMD_RULE_CODESTYLE }}
+          PMD_RULE_DESIGN: ${{ secrets.PMD_RULE_DESIGN }}
+          PMD_RULE_DOCUMENTATION: ${{ secrets.PMD_RULE_DOCUMENTATION }}
+          PMD_RULE_ERRORPRONE: ${{ secrets.PMD_RULE_ERRORPRONE }}
+          PMD_RULE_PERFORMANCE: ${{ secrets.PMD_RULE_PERFORMANCE }}
+          PMD_RULE_SECURITY: ${{ secrets.PMD_RULE_SECURITY }}
+        run: |
+          RULESETS=""
+
+          if [ "$PMD_RULE_BESTPRACTICES" == "true" ]; then
+            RULESETS+="pmdrules/bestpractices.xml,"
+          fi
+
+          if [ "$PMD_RULE_CODESTYLE" == "true" ]; then
+            RULESETS+="pmdrules/codestyle.xml,"
+          fi
+
+          if [ "$PMD_RULE_DESIGN" == "true" ]; then
+            RULESETS+="pmdrules/design.xml,"
+          fi
+
+          if [ "$PMD_RULE_DOCUMENTATION" == "true" ]; then
+            RULESETS+="pmdrules/documentation.xml,"
+          fi
+
+          if [ "$PMD_RULE_ERRORPRONE" == "true" ]; then
+            RULESETS+="pmdrules/errorprone.xml,"
+          fi
+
+          if [ "$PMD_RULE_PERFORMANCE" == "true" ]; then
+            RULESETS+="pmdrules/performance.xml,"
+          fi
+
+          if [ "$PMD_RULE_SECURITY" == "true" ]; then
+            RULESETS+="pmdrules/security.xml,"
+          fi
+                 
+          if [ -z "$RULESETS" ]; then
+            # If RULESETS is empty, set a default value or indicator
+            DEFAULT_RULESET="pmdrules/default.xml"
+            RULESETS="$DEFAULT_RULESET"
+          fi
+
+          echo "PMD_RULESETS=$(echo $RULESETS | sed 's/,$//')" >> "$GITHUB_OUTPUT"
+          echo "RULESET $RULESETS"
+
+      # Run PMD scan
+      - name: "Run PMD scan"
+        uses: pmd/pmd-github-action@v1.4.1
+        id: pmd
+        with:
+          sourcePath: "force-app"
+          rulesets: "${{ steps.set-rulesets.outputs.PMD_RULESETS }}"
+
+      # Check for PMD violations
+      - name: "Check for PMD violations"
+        if: steps.pmd.outputs.violations != 0
+        run: exit 1
+
+      # Install Salesforce CLI
+      - name: "Install Salesforce CLI"
+        run: |
+          npm install @salesforce/cli --location=global
+          nodeInstallPath=$(npm config get prefix)
+          echo "$nodeInstallPath/bin" >> $GITHUB_PATH
+          sf --version
+
+      # Install JQ
+      - name: "Install JQ"
+        run: sudo apt-get update && sudo apt-get -y install jq
+
+      # Authenticate dev hub via jwt
+      - name: "Authenticate Dev Hub via JWT"
+        env:
+          SECRET: ${{env.DEVHUB_SFDX_JWT_SERVER_KEY}}
+        run: |
+          echo "${SECRET}" > $HOME/server.key
+          chmod 600 $HOME/server.key
+          sf org login jwt --client-id ${{ env.DEVHUB_SFDX_CLIENT_ID }} --jwt-key-file $HOME/server.key --username ${{ env.DEVHUB_SFDX_JWT_USERNAME }} --instance-url ${{ env.DEVHUB_SFDX_JWT_INSTANCE_URL }} --alias ${{ env.DEVHUB_SFDX_JWT_ALIAS }}
+
+      # Check Daily Scratch Org Limit
+      - name: "Check Daily Scratch Org Limit"
+        shell: bash
+        run: |
+          limit_name="DailyScratchOrgs"
+          cmd="sfdx force:limits:api:display --target-org ${{ env.DEVHUB_SFDX_JWT_ALIAS }} --json" && (echo $cmd >&2)
+          limits=$($cmd) && (echo $limits | jq '.' >&2)
+          limit=$(jq -r --arg limit_name "$limit_name" '.result[] | select(.name == $limit_name)' <<< "$limits")
+
+          # If a limit was found, then check if we are within it
+          if [ -n "$limit" ]; then
+
+            limit_max=$(jq -r '.max' <<< $limit)
+            limit_rem=$(jq -r '.remaining' <<< $limit)
+
+            if [[ ( -z "$limit_rem" ) || ( $limit_rem == null ) || ( $limit_rem -le 0 ) ]]; then
+              echo "ERROR Max of $limit_max reached for limit $limit_name" >&2
+              exit 1
+            else
+              echo "$limit_rem of $limit_max remaining for limit $limit_name" >&2
+            fi
+
+          else
+            echo "No limits found for name $limit_name" >&2
+            exit 1
+          fi
+
+      # Create scratch org
+      - name: "Create scratch org"
+        run: |
+          sf org create scratch --edition developer --target-dev-hub ${{env.DEVHUB_SFDX_JWT_ALIAS}} --wait 10 --duration-days 1 --definition-file config/project-scratch-def.json --set-default --alias ${{env.DEVHUB_SFDX_JWT_ALIAS}} --json
+          scratch_org_username=$(jq -r '.result[].value' <<< $(sf config get target-org --json))
+          if [ -z "$scratch_org_username" ]; then
+              echo "Scratch org name is empty."
+              exit 1
+          else
+            sf config set target-org=$scratch_org_username
+          fi
+
+      # Deploy source to scratch org
+      - name: "Push source to scratch org"
+        run: npm run scratch:deploy
+
+      # Install sfdx scanner
+      - name: Install Salesforce Scanner
+        run: |
+          if command -v sf &> /dev/null; then
+            sf plugins install @salesforce/sfdx-scanner
+          else
+            echo "Salesforce CLI is not installed."
+          fi
+
+      # Run Salesforce scanner
+      - name: "Run Salesforce Scanner"
+        run: npm run scanner
+
+      # Uploaad the Salesforce Scanner Results
+      - name: Upload Scanner results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-results
+          path: ./.scanner/
+
+      - name: Get Apex Test Classes
+        id: get-test-classes
+        run: |
+          git fetch --all
+          echo "Base branch: ${GITHUB_BASE_REF}"
+          echo "Feature branch: ${GITHUB_HEAD_REF}"
+          test_classes=$(grep -rl --include='*.cls' '@isTest' $(git diff --name-only --diff-filter ACMRTUXB "origin/${GITHUB_BASE_REF}...origin/${GITHUB_HEAD_REF}") | xargs grep -H -m 1 'class ' | sed -e 's/.*class \([[:alnum:]]\+\).*/\1/' | paste -sd "," || true)
+          echo "TEST_CLASSES=${test_classes}" >> "$GITHUB_OUTPUT"
+
+      # Run Apex tests in scratch org
+      - name: Run Specific Apex Tests
+        env:
+          TEST_CLASSES: ${{ steps.get-test-classes.outputs.TEST_CLASSES }}
+        run: |
+          echo "Test Classes are: $TEST_CLASSES"
+          sf apex run test --test-level RunSpecifiedTests --class-names $TEST_CLASSES --code-coverage --detailed-coverage --result-format human --wait 20 --output-dir ./.tests/apex
+
+      # Run Apex tests in scratch org
+      # - name: "Run Apex tests"
+      #   run: npm run test:scratch
+
+      # Upload the Apex Test Reports in artifacts
+      - name: Upload Apex test results
+        uses: actions/upload-artifact@v4
+        if: ${{ success()}}
+        with:
+          name: apex-test-results
+          path: ./.tests/apex
+
+      # Upload code coverage data
+      - name: "Upload code coverage for Apex to Codecov.io"
+        uses: codecov/codecov-action@v3
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          flags: Apex
+
+      # Check Code coverage
+      - name: Enforce Apex Code Coverage - Min 75%
+        run: |
+          target=76
+          coverage=$(sf data query --query "SELECT PercentCovered FROM ApexOrgWideCoverage" --use-tooling-api --json | jq -r '.result.records[0].PercentCovered')
+          if [ "$coverage" -lt "$target" ]; then
+            echo "Failed: Current apex code coverage is $coverage% and it must be min 75%."
+            exit 1
+          else
+            echo "Passed: Apex code coverage is $coverage%."
+          fi
+
+      # Delete the Scratch Org
+      - name: "Delete scratch org"
+        if: always()
+        run: |
+          if command -v sf &> /dev/null; then
+            sf org delete scratch -p
+          else
+            echo "Salesforce CLI is not installed."
+          fi

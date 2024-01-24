@@ -1,0 +1,52 @@
+{
+  "name": "sfdx-project-template",
+  "author": "GitLab",
+  "scripts": {
+    "lint": "eslint **/{lwc,aura}/**/*.js",
+    "test": "npm run test:unit",
+    "test:unit": "sfdx-lwc-jest --skipApiVersionCheck",
+    "test:unit:watch": "sfdx-lwc-jest --watch --skipApiVersionCheck",
+    "test:unit:debug": "sfdx-lwc-jest --debug --skipApiVersionCheck",
+    "test:unit:coverage": "sfdx-lwc-jest --coverage --skipApiVersionCheck",
+    "test:scratch": "sf apex run test --test-level RunLocalTests --code-coverage --detailed-coverage --result-format human --wait 20 --output-dir ./.tests/apex",
+    "scratch:deploy": "sf project deploy start --manifest manifest/package.xml",
+    "scanner": "sf scanner run --target './force-app/main' --format csv --normalize-severity --outfile './.scanner/sfdx-scanner.csv'",
+    "precommit": "lint-staged",
+    "prettier": "prettier --write \"**/*.{cls,cmp,component,css,html,js,json,md,page,trigger,xml,yaml,yml}\"",
+    "prettier:verify": "prettier --check \"**/*.{cls,cmp,component,css,html,js,json,md,page,trigger,xml,yaml,yml}\"",
+    "postinstall": "husky install"
+  },
+  "lint-staged": {
+    "**/*.{cls,cmp,component,css,html,js,json,md,page,trigger,xml,yaml,yml}": [
+      "prettier --write"
+    ],
+    "**/{aura,lwc}/**/*.js": [
+      "eslint"
+    ],
+    "**/lwc/**": [
+      "sfdx-lwc-jest --skipApiVersionCheck -- --bail --findRelatedTests --passWithNoTests"
+    ]
+  },
+  "devDependencies": {
+    "@lwc/eslint-plugin-lwc": "^1.7.0",
+    "@salesforce/sfdx-scanner": "^3.20.0",
+    "@lwc/jest-preset": "^14.3.0",
+    "@prettier/plugin-xml": "^3.2.2",
+    "@sa11y/jest": "^6.2.2",
+    "@salesforce/eslint-config-lwc": "^3.5.2",
+    "@salesforce/eslint-plugin-aura": "^2.1.0",
+    "@salesforce/eslint-plugin-lightning": "^1.0.0",
+    "@salesforce/sfdx-lwc-jest": "^3.1.1",
+    "eslint": "^8.56.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-jest": "^27.6.1",
+    "husky": "^8.0.3",
+    "jest-canvas-mock": "^2.5.2",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.1.1",
+    "prettier-plugin-apex": "^2.0.1"
+  },
+  "volta": {
+    "node": "20.11.0"
+  }
+}
