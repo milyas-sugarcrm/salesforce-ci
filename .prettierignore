@@ -6,5 +6,12 @@
 .localdevserver
 .sfdx
 .vscode
-
 coverage/
+.husky/*
+.git/*
+.svn/*
+.hg/*
+node_modules/*
+.test/*
+.scanner/*
+.prettierignore

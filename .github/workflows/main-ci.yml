@@ -278,8 +278,8 @@ jobs:
           sf apex run test --test-level RunSpecifiedTests --class-names $TEST_CLASSES --code-coverage --detailed-coverage --result-format human --wait 20 --output-dir ./.tests/apex
 
       # Run Apex tests in scratch org
-      # - name: "Run Apex tests"
-      #   run: npm run test:scratch
+      - name: "Run Apex tests"
+        run: npm run test:scratch
 
       # Upload the Apex Test Reports in artifacts
       - name: Upload Apex test results
